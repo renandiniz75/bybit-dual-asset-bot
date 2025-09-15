@@ -2,7 +2,6 @@ services:
   - type: web
     name: dualasset-web
     env: python
-    region: frankfurt
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
     envVars:
@@ -13,19 +12,14 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: APR_MIN
-        value: "0.50"
-      - key: MIN_DIST_BTC
-        value: "0.015"
-      - key: MIN_DIST_ETH
-        value: "0.020"
+        value: 0.50
   - type: worker
     name: dualasset-scraper
     env: python
-    region: frankfurt
-    buildCommand: pip install -r requirements.txt && python -m playwright install --with-deps chromium
+    buildCommand: pip install -r requirements.txt
     startCommand: python scraper.py
     envVars:
-      - key: BYBIT_COOKIES_JSON
-        sync: false
       - key: DATABASE_URL
         sync: false
+      - key: SCRAPE_INTERVAL
+        value: 90

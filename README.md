@@ -1,38 +1,16 @@
-# Bybit Dual Asset Bot — Deploy no Render (copia/cola)
+# Bybit Dual Asset Bot – v4 (Consultivo + Postgres)
 
-Este pacote sobe **dois serviços** no Render (região **Frankfurt/EU**):
-- **dualasset-web** (Streamlit): painel consultivo, lê do Postgres e mostra os **Best Picks**.
-- **dualasset-scraper** (Playwright): entra na página do **Dual Asset** da Bybit e **coleta as ofertas automaticamente**, salvando no Postgres.
+## Passo a passo rápido
+1. **Suba este repositório no GitHub** (pasta inteira).
+2. **Render → New → Blueprint** e aponte para o repo (o `render.yaml` cria web + worker).
+3. **Crie um PostgreSQL** no Render (mesmo projeto/region) e copie a **Internal Database URL**.
+4. Em **dualasset-web** e **dualasset-scraper** adicione a env **DATABASE_URL** com a Internal URL.
+5. (Opcional) Adicione **API_KEY** e **API_SECRET** da Bybit para ver o saldo em *UNIFIED*.
+6. Manual Deploy nos dois serviços.
 
-> **Motivo do Playwright**: a Bybit não expõe API pública estável para Dual Asset. O scraper lê exatamente o que a página mostra para você (autônomo, sem colar nada).
+O painel:
+- Mostra **saldo UNIFIED** (se API estiver configurada).
+- Lê a tabela **offers** (se houver dados) e mostra: tabela, scatter APR×Strike, heatmap por Tenor×Side.
+- Lê **best_picks_history** para o histórico (se houver dados).
 
----
-
-## Passo a passo (sem terminal)
-
-### 1) GitHub
-- Crie um repositório (ex.: `bybit-dual-asset-bot`).
-- Faça **upload de todos os arquivos deste ZIP** (inclusive `render.yaml`).
-- **Commit**.
-
-### 2) Render — Blueprint
-- Render → **New → Blueprint**.
-- Cole a URL do repositório e **Apply**.
-
-### 3) Postgres
-- Render → **New → PostgreSQL** (Frankfurt).
-- Copie a `DATABASE_URL` e configure em **dualasset-web** e **dualasset-scraper** (Environment).
-
-### 4) Variáveis
-**Web:**
-- `API_KEY`, `API_SECRET` (subconta Bybit, valores puros)
-- `DATABASE_URL`
-- (opcional) `APR_MIN=0.50`, `MIN_DIST_BTC=0.015`, `MIN_DIST_ETH=0.020`
-
-**Scraper:**
-- `BYBIT_COOKIES_JSON` = JSON exportado da sua sessão bybit.com (extensão Cookie-Editor → Export JSON)
-- `DATABASE_URL`
-
-### 5) Deploy
-- Em cada serviço (web e scraper) clique **Manual Deploy**.
-- Abra o **web**; se vier “sem ofertas”, aguarde o scraper (até 2 min).
+> O `scraper.py` é um placeholder. Quando quiser, eu envio a versão que coleta as ofertas reais automaticamente e grava no Postgres.

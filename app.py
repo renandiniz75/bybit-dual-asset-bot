@@ -1,78 +1,83 @@
 import os
-import streamlit as st
 import pandas as pd
-from pybit.unified_trading import HTTP
-from db import get_conn, init_schema
+import plotly.express as px
+import streamlit as st
+from sqlalchemy import text
+from db import engine, ensure_schema
+from bybit_api import get_unified_balance
 
-APR_MIN = float(os.getenv("APR_MIN","0.50"))
-MIN_DIST_BTC = float(os.getenv("MIN_DIST_BTC","0.015"))
-MIN_DIST_ETH = float(os.getenv("MIN_DIST_ETH","0.020"))
-API_KEY = os.getenv("API_KEY","")
-API_SECRET = os.getenv("API_SECRET","")
+st.set_page_config(page_title="Bybit Dual Asset Bot", layout="wide")
 
-st.set_page_config(page_title="Bybit Dual Asset Bot", page_icon="📈", layout="centered")
-st.title("📊 Bybit Dual Asset Bot (Autônomo)")
+st.title("📊 Bybit Dual Asset Bot (Consultivo)")
 
-init_schema()
-
-@st.cache_data(ttl=30)
-def get_spot(symbol):
-    s = HTTP(api_key=API_KEY, api_secret=API_SECRET)
-    d = s.get_tickers(category="spot", symbol=symbol)
-    return float(d["result"]["list"][0]["lastPrice"])
-
-@st.cache_data(ttl=15)
-def pull_offers_df():
-    with get_conn() as c:
-        return pd.read_sql(
-            "SELECT ts, asset, side, tenor_d, strike::float AS strike, apr::float AS apr FROM offers WHERE ts > NOW() - INTERVAL '1 hour'",
-            c
-        )
-
+# garante schema ao subir
 try:
-    btc = get_spot("BTCUSDT")
-    eth = get_spot("ETHUSDT")
-    st.metric("BTCUSDT", f"{btc:,.2f}")
-    st.metric("ETHUSDT", f"{eth:,.2f}")
+    ensure_schema()
 except Exception as e:
-    st.error(f"Erro spot: {e}")
-    btc = eth = None
+    st.error(f"Erro ao preparar o schema do banco: {e}")
 
-df = pull_offers_df()
-if df.empty:
-    st.warning("Ainda sem ofertas recentes no banco. Aguarde o scraper (~2 min).")
-else:
-    price_map = {"BTC": btc, "ETH": eth}
-    min_map = {"BTC": MIN_DIST_BTC, "ETH": MIN_DIST_ETH}
-    df["spot"] = df["asset"].map(price_map)
-    df = df.dropna(subset=["spot"])
+with st.sidebar:
+    st.header("Configurações")
+    apr_min = st.number_input(
+        "APR mínimo (decimal)",
+        min_value=0.0, max_value=5.0,
+        value=float(os.getenv("APR_MIN", 0.50)),
+        step=0.05
+    )
+    st.caption("Ex.: 0.50 = 50% a.a.")
 
-    def dist_frac(row):
-        if row["side"] == "SELL":
-            return abs(row["strike"]/row["spot"] - 1.0)
-        else:
-            return abs(1.0 - row["strike"]/row["spot"])
-    df["dist"] = df.apply(dist_frac, axis=1)
-    df["apr_ann"] = df["apr"]/100.0
-    df["ok"] = (df["apr_ann"] >= APR_MIN) & (df.apply(lambda r: r["dist"] >= min_map.get(r["asset"],0), axis=1))
-    df["score"] = 0.7*df["dist"] + 0.3*df["apr_ann"]
+tab1, tab2, tab3 = st.tabs(["💰 Saldo (UNIFIED)", "🔥 Best Picks", "📈 Histórico / Gráficos"])
 
-    top = (df[df["ok"]]
-           .sort_values(["asset","side","tenor_d","score"], ascending=[True,True,True,False])
-           .groupby(["asset","side","tenor_d"])
-           .head(1))
-
-    st.subheader(f"🏆 Best picks (APR ≥ {int(APR_MIN*100)}% e maior distância)")
-    if top.empty:
-        st.info("Nenhuma oferta bateu a regra no momento.")
+with tab1:
+    st.subheader("Saldo da Conta (UNIFIED)")
+    resp = get_unified_balance()
+    if isinstance(resp, dict) and resp.get("error"):
+        st.error(resp["error"])
     else:
-        out = top[["asset","side","tenor_d","strike","spot","dist","apr"]].copy()
-        out.rename(columns={"tenor_d":"tenor(d)","dist":"dist_frac","apr":"apr_%_ann"}, inplace=True)
-        out["dist_%"] = (out["dist_frac"]*100).round(3)
-        out["apr_%"] = out["apr_%_ann"].round(2)
-        st.dataframe(out[["asset","side","tenor(d)","strike","spot","dist_%","apr_%"]], use_container_width=True)
+        st.code(resp, language="json")
 
-    with st.expander("📋 Ofertas recentes (≤ 1h)"):
-        show = df.sort_values("ts", ascending=False).copy()
-        show["dist_%"] = (show["dist"]*100).round(3)
-        st.dataframe(show[["ts","asset","side","tenor_d","strike","spot","dist_%","apr"]], use_container_width=True)
+with tab2:
+    st.subheader("Ofertas acima do APR mínimo")
+    try:
+        eng = engine()
+        df = pd.read_sql(
+            "SELECT * FROM offers WHERE apr >= :m ORDER BY apr DESC LIMIT 100",
+            eng,
+            params={"m": apr_min}
+        )
+        if df.empty:
+            st.info("Sem dados na tabela 'offers'. Insira dados de teste ou ative o coletor.")
+        else:
+            st.dataframe(df, use_container_width=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                fig = px.scatter(df, x="strike", y="apr", color="asset", symbol="side", hover_data=["tenor_d"])
+                st.plotly_chart(fig, use_container_width=True)
+            with c2:
+                hm = df.groupby(["side", "tenor_d"], as_index=False)["apr"].mean()
+                if not hm.empty:
+                    fig2 = px.density_heatmap(hm, x="tenor_d", y="side", z="apr", color_continuous_scale="Viridis")
+                    st.plotly_chart(fig2, use_container_width=True)
+    except Exception as e:
+        st.error(f"Erro ao consultar o banco: {e}")
+
+with tab3:
+    st.subheader("Histórico de Best Picks (últimas 24h)")
+    try:
+        eng = engine()
+        hist = pd.read_sql(
+            """
+            SELECT * FROM best_picks_history
+            WHERE ts >= NOW() - INTERVAL '24 hours'
+            ORDER BY ts DESC LIMIT 1000
+            """,
+            eng
+        )
+        if hist.empty:
+            st.info("Nenhum registro ainda em best_picks_history.")
+        else:
+            fig3 = px.line(hist, x="ts", y="apr", color="asset", line_group="side", markers=True, hover_data=["tenor_d", "strike", "dist"])
+            st.plotly_chart(fig3, use_container_width=True)
+            st.dataframe(hist.head(200), use_container_width=True)
+    except Exception as e:
+        st.error(f"Erro ao consultar histórico: {e}")
