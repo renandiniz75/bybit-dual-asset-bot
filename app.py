@@ -1,94 +1,127 @@
-\
-    import os, time
-    import pandas as pd
-    import plotly.express as px
-    import streamlit as st
-    from sqlalchemy import text
-    from db import engine, ensure_schema
-    from bybit_api import get_unified_balance
 
-    st.set_page_config(page_title="Bybit Dual Asset Bot", layout="wide")
-    st.title("📊 Bybit Dual Asset Bot (Consultivo)")
+import os, json, pandas as pd, plotly.express as px, streamlit as st
+from dotenv import load_dotenv
+from bybit_api import get_unified_balance
+from utils import usd, pct, safe_float, sum_coin_usd
+from offers_client import rank_offers
 
-    # garante schema
-    try:
-        ensure_schema()
-    except Exception as e:
-        st.error(f"Erro ao preparar schema: {e}")
+load_dotenv()
 
-    with st.sidebar:
-        st.header("Configurações")
-        apr_min = st.number_input("APR mínimo (decimal)", 0.0, 5.0, float(os.getenv("APR_MIN", 0.50)), 0.05)
-        tenors = st.multiselect("Tenor (dias)", options=[2,3,4], default=[2,3,4])
-        auto_refresh = st.toggle("Auto-refresh", value=True)
-        refresh_sec = st.number_input("Intervalo (s)", min_value=10, max_value=300, value=30, step=5)
+st.set_page_config(page_title="Bybit Dual Asset Bot", page_icon="📊", layout="wide")
 
-    tab1, tab2, tab3 = st.tabs(["💰 Saldo (UNIFIED)", "🔥 Best Picks / Ofertas", "📈 Histórico"])
+API_KEY = os.getenv("API_KEY","").strip()
+API_SECRET = os.getenv("API_SECRET","").strip()
+MIN_APR = float(os.getenv("MIN_APR","0.5"))
+SCAN_SYMBOLS = [s.strip().upper() for s in os.getenv("SCAN_SYMBOLS","BTC,ETH").split(",") if s.strip()]
+SCAN_DURATIONS = [int(x) for x in os.getenv("SCAN_DURATIONS_DAYS","2,3,4,7").split(",") if x.strip().isdigit()]
 
-    with tab1:
-        st.subheader("Saldo da Conta (UNIFIED)")
-        resp = get_unified_balance()
-        if isinstance(resp, dict) and resp.get("error"):
-            st.error(resp["error"])
-        else:
-            st.code(resp, language="json")
+# HEADER
+st.markdown("## 📊 Bybit Dual Asset Bot (Consultivo + Scanner)")
 
-    with tab2:
-        st.subheader("Ofertas acima do APR mínimo")
+tab1, tab2 = st.tabs(["📋 Saldo & Alocação", "🔎 Melhores Ofertas (Dual Asset)"])
+
+with tab1:
+    if not API_KEY or not API_SECRET:
+        st.error("Configure API_KEY e API_SECRET nas variáveis de ambiente.")
+    else:
         try:
-            eng = engine()
-            q = """
-            SELECT ts, asset, side, tenor_d, strike::float AS strike, apr::float AS apr
-            FROM offers
-            WHERE apr >= :m AND tenor_d = ANY(:tenors)
-            ORDER BY ts DESC, apr DESC
-            LIMIT 500
-            """
-            df = pd.read_sql(text(q), eng, params={"m": apr_min, "tenors": tenors})
-            if df.empty:
-                st.info("Sem dados na tabela 'offers'. Insira dados de teste ou ative o coletor.")
-            else:
-                st.dataframe(df, use_container_width=True, hide_index=True)
-                c1, c2 = st.columns(2)
-                with c1:
-                    fig = px.scatter(df, x="strike", y="apr", color="asset", symbol="side",
-                                     hover_data=["tenor_d","ts"], title="APR × Strike (ofertas filtradas)")
-                    fig.update_layout(height=360, margin=dict(l=0,r=0,t=40,b=0))
-                    st.plotly_chart(fig, use_container_width=True)
-                with c2:
-                    hm = df.groupby(["side","tenor_d"], as_index=False)["apr"].mean()
-                    if not hm.empty:
-                        fig2 = px.density_heatmap(hm, x="tenor_d", y="side", z="apr",
-                                                  color_continuous_scale="Viridis",
-                                                  title="Heatmap — APR médio por Tenor × Direção")
-                        fig2.update_layout(height=360, margin=dict(l=0,r=0,t=40,b=0))
-                        st.plotly_chart(fig2, use_container_width=True)
-        except Exception as e:
-            st.error(f"Erro ao consultar banco: {e}")
+            data = get_unified_balance(API_KEY, API_SECRET)
+            st.caption("Resposta bruta de saldo (para debug/desenvolvedor):")
+            with st.expander("Ver JSON"):
+                st.json(data)
+            lst = (data.get("result",{}).get("list") or [])
+            row = lst[0] if lst else {}
+            coins = row.get("coin",[])
+            # Cards topo
+            total_wallet = safe_float(row.get("totalWalletBalance",0.0))
+            total_avail = safe_float(row.get("totalAvailableBalance",0.0))
+            total_equity = safe_float(row.get("totalEquity",0.0))
+            c1,c2,c3 = st.columns(3)
+            c1.metric("Total Equity", usd(total_equity))
+            c2.metric("Wallet Balance", usd(total_wallet))
+            c3.metric("Available", usd(total_avail))
 
-    with tab3:
-        st.subheader("Histórico de Best Picks (últimas 24h)")
+            # Tabela de moedas
+            records=[]
+            for c in coins:
+                sym = c.get("coin")
+                rec = {
+                    "Ativo": sym,
+                    "Equity": safe_float(c.get("equity",0.0)),
+                    "Free": safe_float(c.get("free",0.0)),
+                    "Wallet": safe_float(c.get("walletBalance",0.0)),
+                    "USD Value": safe_float(c.get("usdValue",0.0)),
+                    "Unreal. PnL": safe_float(c.get("unrealisedPnl",0.0)),
+                }
+                records.append(rec)
+            df = pd.DataFrame(records).sort_values("USD Value", ascending=False)
+            st.markdown("#### 📄 Detalhe por Ativo")
+            st.dataframe(
+                df.style.format({
+                    "Equity":"{:.6f}",
+                    "Free":"{:.6f}",
+                    "Wallet":"{:.6f}",
+                    "USD Value":"${:,.2f}",
+                    "Unreal. PnL":"${:,.2f}",
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            # Pizza de alocação
+            if not df.empty:
+                fig = px.pie(df, values="USD Value", names="Ativo", title="Alocação por USD", hole=0.35)
+                st.plotly_chart(fig, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Erro ao buscar saldo: {e}")
+
+with tab2:
+    st.markdown("##### Parâmetros do Scanner")
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        min_apr_in = st.number_input("APR mínimo (anualizado)", value=MIN_APR, step=0.05, min_value=0.0, max_value=5.0, format="%.2f")
+    with c2:
+        symbols_in = st.multiselect("Símbolos", options=["BTC","ETH"], default=SCAN_SYMBOLS)
+    with c3:
+        days_in = st.multiselect("Durações (dias)", options=[2,3,4,7,14], default=SCAN_DURATIONS)
+    st.caption("Clique em **Escanear** para buscar e ranquear ofertas públicas. Se o site mudar, alguns endpoints podem falhar – o app tenta múltiplas rotas automaticamente.")
+    if st.button("🚀 Escanear", type="primary"):
         try:
-            eng = engine()
-            hist = pd.read_sql(text(\"\"\"
-                SELECT ts, asset, side, tenor_d, strike::float AS strike, apr::float AS apr, dist::float AS dist
-                FROM best_picks_history
-                WHERE ts >= NOW() - INTERVAL '24 hour'
-                ORDER BY ts ASC
-            \"\"\"), eng)
-            if hist.empty:
-                st.info("Ainda não há registros em best_picks_history.")
+            ranked = rank_offers(symbols_in, min_apr_in, days_in)
+            if not ranked:
+                st.warning("Nenhuma oferta encontrada (ou endpoints indisponíveis). Você pode tentar novamente, ajustar APR/dias, ou fornecer `BYBIT_COOKIES_JSON`.")
             else:
-                hist["key"] = hist["asset"] + "-" + hist["side"].str.slice(0,1) + "-" + hist["tenor_d"].astype(str)+"d"
-                fig3 = px.line(hist, x="ts", y="apr", color="key",
-                               title="Evolução de APR dos Best Picks (24h)")
-                fig3.update_layout(height=360, margin=dict(l=0,r=0,t=40,b=0))
-                st.plotly_chart(fig3, use_container_width=True)
-                st.dataframe(hist.tail(200), use_container_width=True, hide_index=True)
+                # DataFrame bonito
+                df = pd.DataFrame(ranked)
+                df["APR %"] = (df["apr"]*100.0).round(2)
+                df["Distância %"] = (df["distance_pct"]*100.0).round(2)
+                df = df.rename(columns={
+                    "direction":"Direção",
+                    "symbol":"Símbolo",
+                    "days":"Dias",
+                    "target":"Preço Alvo",
+                })
+                cols = ["product","Direção","Símbolo","Dias","Preço Alvo","APR %","Distância %"]
+                st.markdown("#### 🏆 Top Ofertas")
+                st.dataframe(
+                    df[cols].style.format({
+                        "Preço Alvo":"${:,.2f}",
+                        "APR %":"{:,.2f}%",
+                        "Distância %":"{:,.2f}%"
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+                # Heatmap simples APR por símbolo vs dias
+                heat = (
+                    df.groupby(["Símbolo","Dias"])["APR %"]
+                      .max()
+                      .reset_index()
+                      .pivot(index="Símbolo", columns="Dias", values="APR %")
+                )
+                st.markdown("#### 🔥 Heatmap – Melhor APR por Símbolo x Dias")
+                st.dataframe(heat.style.background_gradient(cmap="Greens").format("{:,.2f}%"), use_container_width=True)
         except Exception as e:
-            st.error(f"Erro ao consultar histórico: {e}")
-
-    # Auto refresh
-    if auto_refresh:
-        time.sleep(max(10, int(refresh_sec)))
-        st.rerun()
+            st.error(f"Falha ao escanear: {e}")
+    st.info("Este scanner é *consultivo* e não envia ordens. Para execução automática, podemos evoluir para um worker separado com regras de risco.")

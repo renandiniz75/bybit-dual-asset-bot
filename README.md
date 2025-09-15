@@ -1,32 +1,27 @@
-# Bybit Dual Asset Bot — Full v6 (Render-ready)
+# Bybit Dual Asset Bot – v8 (Consultivo + Scanner de Ofertas)
 
-## Conteúdo
-- `runtime.txt` e `.python-version`: força Python 3.11.9
-- `requirements.txt`: deps com wheels para py3.11
-- `render.yaml`: web + worker (build otimizado), região frankfurt
-- `app.py`: painel Streamlit (saldo, ofertas, gráficos, histórico)
-- `db.py`: Postgres + criação automática de schema
-- `init.sql`: opcional para criação manual via console
-- `bybit_api.py`, `scraper.py`, `.streamlit/config.toml`
+Painel Streamlit consultivo para saldo da conta *Unified* e **Scanner de Melhores Ofertas** do Dual Asset (BTC/ETH).
 
-## Deploy (GitHub → Render)
-1. Suba estes arquivos **na raiz** do seu repositório no GitHub.
-2. No Render: **New → Blueprint** e aponte para o repo (ou redeploy o blueprint existente).
-3. Crie um **PostgreSQL** (Frankfurt) e copie a **Internal Database URL**.
-4. Em **dualasset-web** e **dualasset-scraper**, adicione `DATABASE_URL` = Internal URL.
-5. Em **dualasset-web**, adicione `API_KEY` e `API_SECRET` (Bybit) para ver saldo UNIFIED.
-6. **Manual Deploy → Clear cache & Deploy** em web e worker.
+> **Modo consultivo:** não envia ordens. Só lê saldo e consulta endpoints públicos da Bybit. Opcionalmente você pode fornecer cookies para endpoints privados (vide `.env` abaixo).
 
-## Teste rápido (dados fictícios)
-Rode no console do Postgres:
-```sql
-INSERT INTO offers(asset, side, tenor_d, strike, apr) VALUES
-('BTC','SELL',4,120000,68.2),
-('BTC','BUY', 4,108000,55.5),
-('ETH','SELL',4,4850,102.3),
-('ETH','BUY', 4,4400,61.7);
+## Variáveis de ambiente necessárias
+- `API_KEY` – chave API da **subconta** (Somente Leitura é suficiente para esse painel).
+- `API_SECRET` – segredo da chave API.
+- `MIN_APR` – (opcional) mínimo de APR anualizado para destacar/filtrar (ex.: `0.5` para 50%). Padrão: `0.5`.
+- `SCAN_SYMBOLS` – (opcional) lista separada por vírgula, padrão: `BTC,ETH`.
+- `SCAN_DURATIONS_DAYS` – (opcional) dias que o scanner tenta: padrão `2,3,4,7`.
+- `BYBIT_COOKIES_JSON` – (opcional) JSON com cookies (string única) caso queira habilitar endpoints que exijam sessão web.
+
+## Deploy (Render)
+1. Faça upload de todos os arquivos para o seu repositório.
+2. No Render, conecte o repo e deixe o `render.yaml` guiar o serviço.
+3. Em **Environment**, configure as variáveis acima.
+4. Deploy.
+
+## Local
+```bash
+pip install -r requirements.txt
+streamlit run app.py
 ```
-Abra o painel e veja as tabelas/gráficos.
 
-## Notas
-- O `scraper.py` é **placeholder**. Assim que você confirmar que o painel está ok, eu te envio o scraper real.
+---

@@ -1,19 +1,26 @@
-import os
-from pybit.unified_trading import HTTP
 
-def get_client():
-    api_key = os.getenv("API_KEY")
-    api_secret = os.getenv("API_SECRET")
-    if not api_key or not api_secret:
-        return None
-    return HTTP(testnet=False, api_key=api_key, api_secret=api_secret)
+import os, time, hmac, hashlib, requests
+from typing import Dict, Any
 
-def get_unified_balance():
-    client = get_client()
-    if client is None:
-        return {"error": "API_KEY/API_SECRET não configurados."}
-    try:
-        resp = client.get_wallet_balance(accountType="UNIFIED")
-        return resp
-    except Exception as e:
-        return {"error": str(e)}
+BASE = "https://api.bybit.com"
+
+def _auth_headers(api_key: str, api_secret: str, query: str = "", body: str = "") -> Dict[str, str]:
+    ts = str(int(time.time()*1000))
+    recv = "5000"
+    prehash = ts + api_key + recv + query + body
+    sig = hmac.new(api_secret.encode(), prehash.encode(), hashlib.sha256).hexdigest()
+    return {
+        "X-BAPI-API-KEY": api_key,
+        "X-BAPI-TIMESTAMP": ts,
+        "X-BAPI-RECV-WINDOW": recv,
+        "X-BAPI-SIGN": sig,
+        "Content-Type": "application/json"
+    }
+
+def get_unified_balance(api_key: str, api_secret: str):
+    url = f"{BASE}/v5/account/wallet-balance"
+    params = {"accountType":"UNIFIED"}
+    headers = _auth_headers(api_key, api_secret, query="accountType=UNIFIED")
+    r = requests.get(url, params=params, headers=headers, timeout=20)
+    r.raise_for_status()
+    return r.json()
