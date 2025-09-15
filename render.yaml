@@ -1,21 +1,26 @@
-# Render blueprint
 services:
   - type: web
     name: dualasset-web
     env: python
-    plan: starter
-    buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "streamlit run app.py --server.port=$PORT --server.address=0.0.0.0"
     envVars:
+      - key: DATABASE_URL
+        sync: false
       - key: API_KEY
         sync: false
       - key: API_SECRET
         sync: false
-      - key: MIN_APR
-        value: "0.5"
-      - key: SCAN_SYMBOLS
-        value: "BTC,ETH"
-      - key: SCAN_DURATIONS_DAYS
-        value: "2,3,4,7"
-      - key: BYBIT_COOKIES_JSON
+
+  - type: worker
+    name: dualasset-scraper
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python scraper.py"
+    envVars:
+      - key: DATABASE_URL
         sync: false
+      - key: SCRAPER_INTERVAL
+        value: 60

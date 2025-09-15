@@ -1,52 +1,42 @@
+import psycopg2
 import os
-from sqlalchemy import create_engine, text
+import requests
+import hmac, hashlib, time
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+API_KEY = os.getenv("API_KEY")
+API_SECRET = os.getenv("API_SECRET")
 
-_engine = None
+def get_conn():
+    return psycopg2.connect(DATABASE_URL)
 
-def engine():
-    global _engine
-    if _engine is None:
-        if not DATABASE_URL:
-            raise RuntimeError("DATABASE_URL não definido")
-        _engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-    return _engine
+def get_balance():
+    try:
+        ts = str(int(time.time() * 1000))
+        payload = f"api_key={API_KEY}&timestamp={ts}"
+        sign = hmac.new(API_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        url = f"https://api.bybit.com/v5/account/wallet-balance?accountType=UNIFIED&api_key={API_KEY}&timestamp={ts}&sign={sign}"
+        r = requests.get(url).json()
+        if 'result' in r and 'list' in r['result'] and len(r['result']['list']) > 0:
+            acc = r['result']['list'][0]
+            return {
+                "totalEquity": float(acc.get("totalEquity", 0)),
+                "walletBalance": float(acc.get("totalWalletBalance", 0)),
+                "availableBalance": float(acc.get("totalAvailableBalance", 0))
+            }
+    except Exception as e:
+        print("Erro get_balance:", e)
+    return None
 
-SCHEMA_SQL = '''
-CREATE TABLE IF NOT EXISTS offers (
-  id BIGSERIAL PRIMARY KEY,
-  ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  asset TEXT NOT NULL,
-  side  TEXT NOT NULL,
-  tenor_d INT  NOT NULL,
-  strike NUMERIC NOT NULL,
-  apr    NUMERIC NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_offers_ts   ON offers(ts DESC);
-CREATE INDEX IF NOT EXISTS idx_offers_key  ON offers(asset, side, tenor_d, ts DESC);
-
-CREATE TABLE IF NOT EXISTS snapshots (
-  snap_id BIGSERIAL PRIMARY KEY,
-  ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS best_picks_history (
-  id BIGSERIAL PRIMARY KEY,
-  ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  asset TEXT NOT NULL,
-  side  TEXT NOT NULL,
-  tenor_d INT NOT NULL,
-  strike NUMERIC NOT NULL,
-  apr    NUMERIC NOT NULL,
-  dist   NUMERIC NOT NULL
-);
-'''
-
-def ensure_schema():
-    eng = engine()
-    with eng.begin() as con:
-        for stmt in SCHEMA_SQL.split(";"):
-            s = stmt.strip()
-            if s:
-                con.execute(text(s))
+def get_offers():
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, apr, duration, strikePrice, side, ts FROM dual_asset_offers ORDER BY ts DESC LIMIT 20")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+    except Exception as e:
+        print("Erro get_offers:", e)
+    return []

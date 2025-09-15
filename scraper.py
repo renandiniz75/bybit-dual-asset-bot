@@ -1,16 +1,30 @@
-import time, os
-from db import ensure_schema
+import os, requests, psycopg2, time
 
-def scrape_once():
-    # Placeholder: trocaremos por coleta real depois.
-    ensure_schema()
-    print("[scraper] schema ok — aguardando implementação de coleta real.")
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def get_conn():
+    return psycopg2.connect(DATABASE_URL)
+
+def scrape():
+    url = "https://api.bybit.com/v5/earn/dual/list"
+    r = requests.get(url).json()
+    offers = r.get("result", {}).get("list", [])
+    if not offers:
+        print("Nenhuma oferta encontrada.")
+        return
+    conn = get_conn()
+    cur = conn.cursor()
+    for o in offers:
+        cur.execute(
+            "INSERT INTO dual_asset_offers (symbol, apr, duration, strikePrice, side) VALUES (%s,%s,%s,%s,%s)",
+            (o.get("symbol"), o.get("apr"), o.get("duration"), o.get("strikePrice"), o.get("side"))
+        )
+    conn.commit()
+    cur.close()
+    conn.close()
+    print(f"{len(offers)} ofertas salvas.")
 
 if __name__ == "__main__":
-    interval = int(os.getenv("SCRAPE_INTERVAL", 90))
     while True:
-        try:
-            scrape_once()
-        except Exception as e:
-            print("[scraper] erro:", e)
-        time.sleep(interval)
+        scrape()
+        time.sleep(int(os.getenv("SCRAPER_INTERVAL", 60)))
