@@ -2,6 +2,7 @@ import time, os
 from db import ensure_schema
 
 def scrape_once():
+    # Placeholder: trocaremos por coleta real depois.
     ensure_schema()
     print("[scraper] schema ok — aguardando implementação de coleta real.")
 
