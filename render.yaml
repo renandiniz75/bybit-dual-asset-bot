@@ -2,7 +2,7 @@ services:
   - type: web
     name: dualasset-web
     env: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
     envVars:
       - key: API_KEY
@@ -12,14 +12,15 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: APR_MIN
-        value: 0.50
+        value: "0.50"
+
   - type: worker
     name: dualasset-scraper
     env: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
     startCommand: python scraper.py
     envVars:
       - key: DATABASE_URL
         sync: false
       - key: SCRAPE_INTERVAL
-        value: 90
+        value: "90"

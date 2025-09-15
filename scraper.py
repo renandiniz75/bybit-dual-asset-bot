@@ -1,12 +1,15 @@
 import time, os
-from db import ensure_schema, engine
+from db import ensure_schema
 
 def scrape_once():
     ensure_schema()
-    print("Scraper placeholder executado - aguardando coleta real...")
+    print("[scraper] schema ok — aguardando implementação de coleta real.")
 
 if __name__ == "__main__":
     interval = int(os.getenv("SCRAPE_INTERVAL", 90))
     while True:
-        scrape_once()
+        try:
+            scrape_once()
+        except Exception as e:
+            print("[scraper] erro:", e)
         time.sleep(interval)
