@@ -1,26 +1,20 @@
 services:
   - type: web
-    name: dualasset-web
+    name: dual-asset-web
     env: python
-    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    plan: free
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "gunicorn app:app"
     envVars:
-      - key: API_KEY
-        sync: false
-      - key: API_SECRET
-        sync: false
-      - key: DATABASE_URL
-        sync: false
-      - key: APR_MIN
-        value: "0.50"
+      - key: PYTHON_VERSION
+        value: 3.11.9
 
   - type: worker
-    name: dualasset-scraper
+    name: dual-asset-worker
     env: python
-    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
-    startCommand: python scraper.py
+    plan: free
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "python worker.py"
     envVars:
-      - key: DATABASE_URL
-        sync: false
-      - key: SCRAPE_INTERVAL
-        value: "90"
+      - key: PYTHON_VERSION
+        value: 3.11.9
